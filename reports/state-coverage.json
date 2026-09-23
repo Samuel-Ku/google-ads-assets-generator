@@ -1,0 +1,62 @@
+{
+  "root": "/Users/MARKETING1/Google Ads Assets generator/static",
+  "files_scanned": 3,
+  "passed": true,
+  "states": {
+    "loading": {
+      "present": true,
+      "matched_terms": [
+        "/loading/i",
+        "/spinner/i"
+      ]
+    },
+    "empty": {
+      "present": true,
+      "matched_terms": [
+        "/empty/i"
+      ]
+    },
+    "error": {
+      "present": true,
+      "matched_terms": [
+        "/error/i",
+        "/catch\\s*\\(/i"
+      ]
+    },
+    "disabled": {
+      "present": true,
+      "matched_terms": [
+        "/disabled/i"
+      ]
+    },
+    "focus": {
+      "present": true,
+      "matched_terms": [
+        "/focus-visible/i",
+        "/:focus/i"
+      ]
+    },
+    "selected": {
+      "present": true,
+      "matched_terms": [
+        "/selected/i"
+      ]
+    },
+    "submitting": {
+      "present": true,
+      "matched_terms": [
+        "/submitting/i"
+      ]
+    },
+    "success": {
+      "present": true,
+      "matched_terms": [
+        "/success/i",
+        "/saved/i",
+        "/complete/i"
+      ]
+    }
+  },
+  "missing": [],
+  "note": "All state markers found."
+}

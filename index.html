@@ -1,0 +1,69 @@
+<!-- Place this file at: templates/index.html -->
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Генератор рекламних банерів</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🎯 Генератор банерів для Google Ads</h1>
+      <p class="subtitle">Завантаж фото, впиши текст — отримай повний набір готових банерів у ZIP.</p>
+    </header>
+
+    <section class="card">
+      <h2>1. Логотип (опційно, спільний для всіх варіацій)</h2>
+      <label class="file-drop" id="logo-drop">
+        <input type="file" id="logo-input" accept="image/*" hidden>
+        <span id="logo-label">📁 Натисни або перетягни файл лого</span>
+      </label>
+    </section>
+
+    <section id="variations"></section>
+
+    <button id="add-variation" class="btn btn-secondary">+ Додати ще один банер</button>
+
+    <div class="actions">
+      <button id="generate-btn" class="btn btn-primary">🚀 Створити всі банери</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="results"></div>
+  </div>
+
+  <template id="variation-template">
+    <div class="card variation">
+      <div class="variation-header">
+        <h2>Банер #<span class="var-index"></span></h2>
+        <button type="button" class="btn-remove" title="Видалити">✕</button>
+      </div>
+
+      <label class="file-drop bg-drop">
+        <input type="file" class="bg-input" accept="image/*" hidden>
+        <span class="bg-label">📁 Натисни або перетягни фонове фото</span>
+        <img class="bg-preview" hidden>
+      </label>
+
+      <div class="fields">
+        <label>Заголовок
+          <input type="text" class="headline-input" placeholder="Наприклад: Осіння знижка -30%" maxlength="60">
+        </label>
+        <label>Опис (необов'язково)
+          <input type="text" class="description-input" placeholder="Короткий підпис під заголовком" maxlength="90">
+        </label>
+        <label>Текст кнопки
+          <input type="text" class="cta-input" value="Дізнатись більше" maxlength="25">
+        </label>
+        <label>Колір бренду
+          <input type="color" class="color-input" value="#1a73e8">
+        </label>
+      </div>
+    </div>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

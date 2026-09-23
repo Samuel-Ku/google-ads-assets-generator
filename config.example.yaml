@@ -1,0 +1,19 @@
+materials_dir: "materials"
+output_dir: "output"
+
+campaigns:
+  - name: "autumn_sale"
+    background_image: "product_photo_1.jpg"   # файл всередині materials/
+    logo: "logo.png"                          # опційно
+    headline: "Осіння знижка -30%"
+    description: "Тільки до кінця тижня. Безкоштовна доставка від 500 грн."
+    cta: "Купити зараз"
+    brand_color: "#1a73e8"
+
+  - name: "autumn_sale_v2"
+    background_image: "product_photo_2.jpg"
+    logo: "logo.png"
+    headline: "Встигни забрати знижку"
+    description: "Обмежена кількість товару в наявності."
+    cta: "Дивитись каталог"
+    brand_color: "#e8711a"

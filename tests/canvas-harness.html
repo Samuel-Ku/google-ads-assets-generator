@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="pl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lokalne testy kompozycji</title>
+<style>
+body{font:15px Arial,sans-serif;background:#f5f6f4;color:#182021;margin:28px}h1{font-size:26px}button{padding:10px 18px}#results{white-space:pre-wrap;line-height:1.5;background:white;padding:20px;border:1px solid #cfd6d0}.pass{color:#155d36}.fail{color:#a22222}#samples{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:18px;margin:20px 0}.sample{background:white;padding:12px}.sample canvas{max-width:100%;height:auto;border:1px solid #cfd6d0}.sample p{font-size:12px}.fixture{width:240px;height:160px;display:block}#fixtures{position:absolute;left:-2000px;top:0}
+</style>
+<h1>Testy Canvas — tylko lokalnie</h1>
+<p>Ta strona nie jest trasą aplikacji produkcyjnej. Sprawdza rzeczywiste piksele, maski i pliki eksportowe w przeglądarce.</p>
+<button id="run">Uruchom ponownie</button>
+<pre id="results" role="status">Uruchamianie…</pre>
+<div id="samples"></div><div id="fixtures"></div>
+<script src="../static/canvas.js"></script>
+<script>
+'use strict';
+const report = document.getElementById('results');
+function assert(ok, message) { if (!ok) throw new Error(message); }
+function fixture(width, height) { const c=document.createElement('canvas');c.width=width;c.height=height;return c; }
+function pixel(canvas,x,y) { return Array.from(canvas.getContext('2d').getImageData(x,y,1,1).data); }
+async function readBlob(blob) { const c=fixture(1,1),image=await createImageBitmap(blob);c.width=image.width;c.height=image.height;c.getContext('2d').drawImage(image,0,0);image.close();return c; }
+async function run(){
+ document.getElementById('run').disabled=true;document.getElementById('samples').replaceChildren();document.getElementById('fixtures').replaceChildren();
+ const lines=[];let failed=0;
+ const test=async(name,fn)=>{try{await fn();lines.push('OK  '+name);}catch(e){failed++;lines.push('BŁĄD  '+name+' — '+e.message);}report.textContent=lines.join('\n');};
+ const S=window.StudioCanvas;
+ const original=fixture(120,80),o=original.getContext('2d');o.fillStyle='rgb(14,96,180)';o.fillRect(0,0,120,80);o.fillStyle='rgb(222,45,36)';o.fillRect(0,0,24,80);
+ const cutout=fixture(120,80),c=cutout.getContext('2d');c.fillStyle='rgb(240,0,240)';c.fillRect(35,0,85,80);
+ const product={id:'fixture',url:original.toDataURL('image/png')};
+ const brand={color:'#E76A25',secondary_color:'#F4F1EC',text_color:'#182021',font_family:'Arial',logo_url:product.url};
+ const make=(template='split',w=600,h=450)=>S.makeScene({template,width:w,height:h,brand,product,background:template==='backdrop'?product:null,elements:template==='label'?[{...product,id:'label'}]:[],headline:'Jesień w dobrym zestawie',description:'Dobierz akcesoria do laptopa lub komputera.',cta:'Sprawdź ofertę'});
+ await test('Dziewięć szablonów i adaptacja do małych, pionowych oraz poziomych formatów',async()=>{
+  assert(S.templates.length===9&&new Set(S.templates.map(t=>t.id)).size===9,'Biblioteka nie ma dziewięciu odrębnych szablonów.');
+  const formats=[[600,450],[300,250],[336,280],[728,90],[970,90],[970,250],[120,600],[160,600],[300,600],[320,50],[320,100],[750,100],[750,200],[750,300]];
+  for(const t of S.templates)for(const [w,h] of formats){const scene=make(t.id,w,h);const target=fixture(w,h);await S.render(target,scene);const errors=S.validate(scene).filter(x=>x.level==='error');assert(!errors.length,t.id+' '+w+'×'+h+': '+errors.map(x=>x.message).join(' '));}
+ });
+ await test('Nowe schematy mają różną geometrię, zachowują produkty i nie dodają treści oferty',async()=>{
+  const ids=['catalog','benefits','label','backdrop','bundle','bold'],products=[product,{...product,id:'two'},{...product,id:'three'}];
+  for(const [w,h] of [[600,450],[750,300],[300,600],[728,90],[320,50]]){
+   const fingerprints=new Set();
+   for(const template of ids){
+    const scene=S.makeScene({template,width:w,height:h,brand,products,background:template==='backdrop'?product:null,elements:[{...product,id:'label'}],headline:'Oferta',description:'Dobierz akcesoria.',cta:'Sprawdź'});
+    const actual=scene.layers.filter(l=>l.role==='product');assert(actual.length===3&&actual.every(l=>l.fit==='contain'),'Schemat '+template+' zgubił lub rozciągnął produkty.');
+    assert(scene.layers.filter(l=>l.type==='text').every(l=>['Oferta','Dobierz akcesoria.','Sprawdź'].includes(l.text)),'Szablon dopisał własną ofertę.');
+    fingerprints.add(JSON.stringify(scene.layers.filter(l=>['headline','product','cta'].includes(l.role)).map(l=>[l.role,l.x,l.y,l.w,l.h])));
+    const errors=S.validate(scene).filter(x=>x.level==='error');assert(!errors.length,template+' '+w+'×'+h+': '+errors.map(x=>x.message).join(' '));
+    const clean=S.adaptScene(scene,1200,628,{clean:true});assert(clean.layers.filter(l=>l.role==='product').length===3&&clean.layers.every(l=>l.type==='image'&&['product','background'].includes(l.role)),'Schemat '+template+' przeniósł nakładki do RDA/PMax.');
+   }
+   assert(fingerprints.size===ids.length,'Schematy mają ten sam układ dla '+w+'×'+h+'.');
+  }
+ });
+ await test('Katalog zachowuje równorzędne zdjęcia; zestaw wyróżnia pierwszy produkt we wszystkich proporcjach',async()=>{
+  const products=[product,{...product,id:'accessory-a'},{...product,id:'accessory-b'}],makeMany=(template,w,h)=>S.makeScene({template,width:w,height:h,brand,products,headline:'Oferta',cta:'Sprawdź'});
+  const catalog=makeMany('catalog',600,450).layers.filter(l=>l.role==='product');assert(catalog.every(l=>Math.abs(l.w*l.h-catalog[0].w*catalog[0].h)<1e-9),'Katalog nadał jednemu produktowi inną wagę.');
+  const master=makeMany('bundle',600,450),hero=master.layers.find(l=>l.id==='product');hero.cropX=.7;hero.x+=.015;
+  for(const [w,h] of [[750,300],[300,600],[728,90],[320,50]]){
+   const adapted=S.adaptScene(master,w,h),items=adapted.layers.filter(l=>l.role==='product'),main=items.find(l=>l.id==='product');
+   assert(items.length===3&&main.asset_id===product.id&&main.cropX===.7,'Adaptacja zestawu zgubiła kolejność lub kadr.');
+   assert(items.filter(l=>l!==main).every(l=>main.w*main.h>l.w*l.h*1.5),'Główny produkt nie jest większy od akcesoriów w '+w+'×'+h+'.');
+   const baseline=makeMany('bundle',w,h).layers.find(l=>l.id==='product');assert(Math.abs(main.x-baseline.x-.015)<1e-8,'Adaptacja zestawu zgubiła ręczne przesunięcie.');
+   await S.renderBlob(adapted);
+  }
+ });
+ await test('Dwa Elementy w nowych schematach nie zasłaniają nagłówka, opisu, logo ani CTA',async()=>{
+  const products=[product,{...product,id:'second'},{...product,id:'third'}],elements=[{...product,id:'label-a'},{...product,id:'label-b'}];
+  const overlap=(a,b)=>Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x)>1e-8&&Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y)>1e-8;
+  for(const template of ['catalog','benefits','label','backdrop','bundle','bold']){
+   const args={template,brand,products,elements,background:template==='backdrop'?product:null,headline:'Oferta',description:'Dobierz akcesoria.',cta:'Sprawdź'},master=S.makeScene({...args,width:1200,height:900});
+   for(const [width,height] of [[1200,900],[300,250],[750,300],[160,600],[300,600],[728,90],[320,50]]){
+    for(const scene of [S.makeScene({...args,width,height}),S.adaptScene(master,width,height)]){
+     const labels=scene.layers.filter(l=>l.role==='element'),copy=scene.layers.filter(l=>l.type==='text'||l.role==='logo');
+     assert(labels.length===2&&labels.every(l=>l.fit==='contain'),'Zgubiono lub rozciągnięto Elementy.');
+     assert(labels.every(l=>copy.every(t=>!overlap(l,t))),template+' '+width+'×'+height+': Element zasłania treść lub logo.');
+    }
+   }
+  }
+ });
+ await test('Etykieta trafia w osobne miejsce i przenosi poprawki do pionu oraz wąskiego paska',async()=>{
+  const makeLabel=(w,h)=>S.makeScene({template:'label',width:w,height:h,brand,product,elements:[{...product,id:'label'}],headline:'Oferta',cta:'Sprawdź'});
+  const master=makeLabel(600,450),label=master.layers.find(l=>l.role==='element'),p=master.layers.find(l=>l.role==='product');
+  assert(label.x>=p.x+p.w&&label.y+label.h<p.y,'Etykieta nie ma osobnego miejsca w kompozycji.');label.x-=.01;label.cropX=.7;label.opacity=.8;
+  for(const [w,h] of [[750,300],[300,600],[728,90],[320,50]]){
+   const next=S.adaptScene(master,w,h),actual=next.layers.find(l=>l.role==='element'),baseline=makeLabel(w,h).layers.find(l=>l.role==='element');
+   assert(actual&&actual.id===label.id&&actual.asset_id===label.asset_id&&actual.cropX===.7&&actual.opacity===.8,'Adaptacja zgubiła własną etykietę.');
+   assert(Math.abs(actual.x-baseline.x+.01)<1e-8&&Math.abs(actual.y-baseline.y)<1e-8,'Etykieta nie została dopasowana do nowego schematu.');
+   await S.renderBlob(next);
+  }
+ });
+ await test('Zdjęcie w tle pozostaje pod panelem, a mocny kolor ma kontrastowy tekst i edytowalne pola',async()=>{
+  const scene=S.makeScene({template:'backdrop',width:600,height:450,brand,background:product,headline:'Oferta',cta:'Sprawdź'});
+  assert(scene.layers[0].role==='background'&&scene.layers[0].fit==='cover'&&!scene.layers.some(l=>l.role==='product'),'Tło nie wypełnia banera albo wymaga pustego produktu.');
+  const panel=scene.layers.find(l=>l.id==='backdrop-copy'),head=scene.layers.find(l=>l.role==='headline');assert(panel.x<=head.x&&panel.y<=head.y&&panel.x+panel.w>=head.x+head.w&&panel.y+panel.h>=head.y+head.h,'Nagłówek nie ma czytelnego panelu.');await S.renderBlob(scene);
+  for(const accent of ['#FFFFFF','#101819']){const bold=S.makeScene({template:'bold',width:600,height:450,brand:{...brand,color:accent},product,headline:'Oferta',cta:'Sprawdź'});const copy=bold.layers.find(l=>l.role==='headline');assert(copy.color===(accent==='#FFFFFF'?'#101819':'#FFFFFF'),'Tekst nie dopasował kontrastu do koloru marki.');assert(bold.layers.some(l=>l.id==='bold-field'&&l.type==='rect'&&l.color===accent),'Kolor marki nie jest edytowalną warstwą.');await S.renderBlob(bold);}
+ });
+ await test('Brak własnego tła lub etykiety jest widoczny i blokuje eksport również po zmianie formatu',async()=>{
+  for(const [template,role] of [['backdrop','background'],['label','element']]){
+   const scene=S.makeScene({template,width:600,height:450,brand,product,headline:'Oferta',cta:'Sprawdź'});
+   for(const candidate of [scene,S.adaptScene(scene,300,600)]){const missing=candidate.layers.find(l=>l.role===role);assert(missing&&!missing.src&&missing.missingSlot===role+':0','Brakujące miejsce zniknęło po adaptacji.');assert(S.validate(candidate).some(i=>i.level==='error'&&i.layerId===missing.id),'Brak materiału nie blokuje eksportu.');}
+  }
+  const scene=make('bundle'),logo=scene.layers.find(l=>l.role==='logo');logo.src='';logo.asset_id=null;logo.missingSlot='logo:0';
+  for(const [w,h] of [[300,600],[728,90]]){const next=S.adaptScene(scene,w,h),missing=next.layers.find(l=>l.role==='logo');assert(missing&&!missing.src&&missing.missingSlot==='logo:0','Brakujące logo zniknęło po adaptacji.');assert(S.validate(next).some(i=>i.level==='error'&&i.layerId===missing.id),'Brak logo nie blokuje eksportu.');}
+ });
+ await test('Contain zachowuje proporcje rzeczywistego zdjęcia',async()=>{
+  const scene={width:160,height:160,background:'#FFFFFF',layers:[{id:'product',type:'image',role:'product',src:product.url,x:0,y:0,w:1,h:1,fit:'contain'}]};const target=fixture(160,160);await S.render(target,scene);assert(pixel(target,80,5).slice(0,3).every(v=>v===255),'Górny margines nie jest pusty — obraz został rozciągnięty.');assert(pixel(target,80,80)[2]===180,'Nieprawidłowe piksele produktu.');
+ });
+ await test('SVG jako Element i logo zachowuje gradient, przycięcie i ostre krawędzie w eksporcie 1200 px',async()=>{
+  // Static SVG matching the supported upload subset: no script or external resource.
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="paint"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient><clipPath id="clip"><rect x="4" y="4" width="16" height="16"/></clipPath></defs><style>.panel{fill:url(#paint);clip-path:url(#clip)}.line{fill:none;stroke:#000;stroke-width:.08}</style><rect class="panel" x="2" y="2" width="20" height="20"/><path class="line" d="M12 6V18"/></svg>';
+  const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'}));
+  try{
+   const scene=S.makeScene({width:1200,height:600,brand:{...brand,logo_url:url},elements:[{id:'svg-label',url}],headline:'Oferta',cta:'Sprawdź'});
+   scene.background='transparent';scene.layers=scene.layers.filter(x=>x.role==='element'||x.role==='logo');
+   assert(scene.layers.length===2,'Nie utworzono logo i Elementu z SVG.');
+   for(const layer of scene.layers)Object.assign(layer,{x:layer.role==='logo'?.5:0,y:0,w:.5,h:1,fit:'contain',opacity:1});
+   const out=await S.renderBlob(scene,{type:'image/png'}),image=await readBlob(out.blob);
+   assert(image.width===1200&&image.height===600,'Eksport SVG zmienił wymiary kompozycji.');
+   for(const origin of [0,600]){
+    assert(pixel(image,origin+50,300)[3]===0&&pixel(image,origin+99,300)[3]===0,'SVG utracił przezroczystość lub clipping.');
+    const red=pixel(image,origin+150,300),blue=pixel(image,origin+450,300);
+    assert(red[0]>180&&red[2]<80&&red[3]===255&&blue[2]>180&&blue[0]<80&&blue[3]===255,'Gradient lub styl klasy SVG nie został wyrenderowany.');
+    assert(pixel(image,origin+299,300).slice(0,3).every(v=>v<10),'Cienka linia SVG nie została zachowana.');
+    assert(pixel(image,origin+297,300)[0]>90&&pixel(image,origin+302,300)[2]>90,'SVG powiększono z małej bitmapy — krawędź jest rozmyta.');
+   }
+   const jpeg=await readBlob((await S.renderBlob(scene,{type:'image/jpeg'})).blob);
+   assert(pixel(jpeg,50,300).slice(0,3).every(v=>v>245),'Eksport JPEG nie spłaszczył przezroczystości SVG do bieli.');
+  }finally{URL.revokeObjectURL(url);}
+ });
+ await test('RDA/PMax wyklucza tekst, CTA, logo i dekoracje',async()=>{
+  const scene=S.adaptScene(make(),1200,628,{clean:true});assert(scene.layers.every(x=>x.type==='image'&&['product','background'].includes(x.role)),'Niedozwolone nakładki.');const out=await S.renderBlob(scene);const image=await readBlob(out.blob);assert(image.width===1200&&image.height===628,'Błędne wymiary.');assert(out.blob.size<=5*1024*1024,'Błędny limit pliku.');
+ });
+ await test('Kampania ze zdjęciem tła bez osobnego produktu jest eksportowalna',async()=>{
+  const scene=S.makeScene({width:600,height:450,brand,background:product,headline:'Oferta jesienna',cta:'Sprawdź ofertę'});assert(!scene.layers.some(x=>x.role==='product'),'Dodano pusty produkt.');const portrait=S.adaptScene(scene,300,600);await S.renderBlob(portrait);const clean=S.adaptScene(scene,1200,628,{clean:true});assert(clean.layers.length===1&&clean.layers[0].role==='background','Błędna warstwa tła.');
+ });
+ await test('Adaptacja zachowuje zmieniony tekst, styl i dodatkową warstwę tekstową',async()=>{
+  const scene=make();scene.layers.find(x=>x.role==='headline').text='Inny nagłówek';scene.layers.find(x=>x.role==='headline').color='#123456';scene.layers.push({id:'footnote-1',type:'text',role:'description',text:'Ważne warunki',x:.1,y:.96,w:.7,h:.03,fontSize:10});const adapted=S.adaptScene(scene,300,600);assert(adapted.layers.find(x=>x.id==='headline').text==='Inny nagłówek','Tekst został zastąpiony.');assert(adapted.layers.find(x=>x.id==='headline').color==='#123456','Styl został zastąpiony.');assert(adapted.layers.some(x=>x.id==='footnote-1'),'Dodatkowy tekst zniknął.');
+ });
+ await test('Wiele produktów oraz elementy zachowują identyfikatory, układ i kolejność',async()=>{
+  const products=[product,{...product,id:'second'},{...product,id:'third',parent_id:'third-original'}];
+  const scene=S.makeScene({width:600,height:450,brand,products,elements:[{...product,id:'label'}],headline:'Oferta',cta:'Sprawdź'});
+  const items=scene.layers.filter(x=>x.role==='product');assert(items.length===3,'Brakuje produktu.');assert(items.map(x=>x.id).join(',')==='product,product-second,product-third-original','Identyfikatory nie są stabilne.');assert(new Set(items.map(x=>x.x+','+x.y)).size===3,'Produkty nakładają się w jednym miejscu.');
+  const selected=items[1];selected.x+=.025;selected.cropX=.75;scene.layers=scene.layers.filter(x=>x!==selected).concat(selected);
+  const portrait=S.adaptScene(scene,300,600);assert(portrait.layers.filter(x=>x.role==='product').length===3,'Adaptacja zgubiła produkt.');assert(portrait.layers.at(-1).id===selected.id,'Adaptacja zgubiła kolejność.');assert(portrait.layers.find(x=>x.id===selected.id).cropX===.75,'Adaptacja zgubiła kadr.');assert(portrait.layers.some(x=>x.id==='element-label'),'Element zniknął z banera.');
+  const clean=S.adaptScene(scene,1200,628,{clean:true});assert(clean.layers.filter(x=>x.role==='product').length===3,'RDA/PMax zgubił produkty.');assert(!clean.layers.some(x=>x.role==='element'),'Element nie może trafić do czystego RDA/PMax.');await S.renderBlob(clean);await S.renderBlob(portrait);
+ });
+ await test('Edycja geometrii oraz stylu CTA przechodzi do innych proporcji i pikseli',async()=>{
+  const scene=make(),cta=scene.layers.find(x=>x.role==='cta');cta.cornerRadius=.5;cta.borderWidth=4;cta.borderColor='#123456';cta.x+=.02;
+  const adapted=S.adaptScene(scene,300,600),next=adapted.layers.find(x=>x.role==='cta');assert(next.cornerRadius===.5&&next.borderColor==='#123456','Adaptacja zgubiła styl CTA.');assert(Math.abs(next.borderWidth-4*600/450)<.0001,'Adaptacja zgubiła skalę obrysu.');
+  const baseline=S.makeScene({template:'split',width:300,height:600,brand,product,headline:scene.content.headline,description:scene.content.description,cta:scene.content.cta}).layers.find(x=>x.role==='cta');assert(Math.abs(next.x-baseline.x-.02)<.0001,'Adaptacja zgubiła przesunięcie CTA.');
+  const button={width:200,height:100,background:'#FFFFFF',layers:[{id:'cta',role:'cta',type:'text',text:'OK',fontSize:15,x:.1,y:.1,w:.8,h:.8,align:'center',color:'#FFFFFF',backgroundColor:'#E76A25',cornerRadius:.5,borderWidth:4,borderColor:'#123456'}]};const target=fixture(200,100);await S.render(target,button);assert(pixel(target,21,11).slice(0,3).every(x=>x===255),'Zaokrąglenie nie jest renderowane.');assert(pixel(target,100,11).slice(0,3).join(',')==='18,52,86','Obrys nie jest renderowany.');
+  button.layers[0].cornerRadius=0;await S.render(target,button);assert(pixel(target,21,11)[0]===18,'Kwadratowy narożnik został zaokrąglony.');
+ });
+  await test('Nowa warstwa Element jest wybierana, renderowana i zgłaszana jako zmiana',async()=>{
+   const canvas=fixture(600,450);document.getElementById('fixtures').append(canvas);let changes=0;const editor=new S.Editor(canvas,{scene:make(),onChange:()=>changes++});editor.addLayer({id:'element-added',type:'image',role:'element',asset_id:'fixture',src:product.url,x:.1,y:.1,w:.2,h:.2});assert(editor.selectedId==='element-added'&&changes===1,'Dodanie warstwy nie powiadomiło edytora.');await S.render(canvas,editor.getScene());assert(editor.getScene().layers.at(-1).id==='element-added','Element nie jest na wierzchu.');editor.destroy();
+  });
+  await test('Kształty: prostokąt i kwadrat renderują wypełnienie, kolejność i proporcje',async()=>{
+   const bare={width:600,height:450,background:'#FFFFFF',layers:[
+    {id:'shape-1',type:'rect',role:'shape',shape:'rectangle',x:.1,y:.1,w:.5,h:.5,color:'#123456',opacity:1},
+    {id:'shape-2',type:'rect',role:'shape',shape:'square',x:.3,y:.3,w:.3,h:.4,color:'#E76A25',opacity:1}]};
+   assert(Math.abs(.3*600-.4*450)<1e-9,'Kwadrat nie ma równych boków w pikselach.');
+   const target=fixture(600,450);await S.render(target,bare);
+   assert(pixel(target,120,90).slice(0,3).join(',')==='18,52,86','Wypełnienie prostokąta nie jest renderowane.');
+   assert(pixel(target,300,200).slice(0,3).join(',')==='231,106,37','Wierzchni kształt nie zachował kolejności.');
+   const tall=S.adaptScene(bare,300,600),sq=tall.layers.find(x=>x.id==='shape-2');
+   assert(Math.abs(sq.w*300-sq.h*600)<1.5,'Adaptacja rozciągnęła kwadrat.');
+   await S.render(target,tall);assert(pixel(target,135,300).slice(0,3).join(',')==='231,106,37','Kwadrat nie zachował środka po adaptacji.');
+   assert(!S.adaptScene(bare,1200,628,{clean:true}).layers.some(x=>x.role==='shape'),'Kształt trafił do czystego RDA/PMax.');
+   const canvas=fixture(600,450);document.getElementById('fixtures').append(canvas);let changes=0;const editor=new S.Editor(canvas,{scene:make(),onChange:()=>changes++});
+   editor.addLayer({...S.makeShape({shape:'rectangle',brand,width:600,height:450,id:'shape-added'}),x:.1,y:.1,w:.2,h:.1});
+   assert(editor.selectedId==='shape-added'&&changes===1,'Dodanie kształtu nie powiadomiło edytora.');
+   assert(editor.getScene().layers.at(-1).id==='shape-added','Kształt nie jest na wierzchu.');
+   editor.select('shape-added');canvas.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true}));
+   assert(!editor.getScene().layers.some(x=>x.id==='shape-added'),'Usunięcie kształtu nie działa.');
+   editor.destroy();
+  });
+ await test('Błędy tekstu i wymiarów blokują eksport; limit bajtów nie zmienia wymiarów',async()=>{
+  const scene=make();const heading=scene.layers.find(x=>x.role==='headline');heading.text='Zbyt dużo tekstu '.repeat(150);assert(S.validate(scene).some(x=>x.level==='error'&&x.layerId===heading.id),'Brak ostrzeżenia o przepełnieniu.');let rejected=false;try{await S.renderBlob(scene);}catch(e){rejected=true;}assert(rejected,'Wyeksportowano obcięty tekst.');rejected=false;try{await S.renderBlob(make(),{maxBytes:1});}catch(e){rejected=true;}assert(rejected,'Zignorowano limit bajtów.');
+ });
+ await test('Kolory Brand Kit i kontrast na jednolitym tle mają konkretne ostrzeżenia',async()=>{
+  const scene=make(),heading=scene.layers.find(x=>x.role==='headline');heading.color='#F4F1ED';const warnings=S.validate(scene);assert(warnings.some(x=>x.layerId==='headline'&&x.message.includes('spoza palety')),'Brak kontroli palety.');assert(warnings.some(x=>x.layerId==='headline'&&x.message.includes('kontrast')),'Brak kontroli kontrastu.');
+ });
+ await test('Maska zachowuje RGB oryginału, mapuje współrzędne CSS i przywraca piksele',async()=>{
+  const canvas=fixture(120,80);canvas.className='fixture';document.getElementById('fixtures').append(canvas);const mask=new S.MaskEditor(canvas,{originalUrl:product.url,cutoutUrl:cutout.toDataURL('image/png')});await mask.ready;assert(pixel(canvas,80,40).join(',')==='14,96,180,255','Użyto koloru z wycięcia zamiast oryginału.');assert(pixel(canvas,10,40)[3]===0,'Nie odczytano początkowej maski.');const r=canvas.getBoundingClientRect(),p=mask._point({clientX:r.left+r.width*.75,clientY:r.top+r.height*.5});assert(Math.abs(p.x-90)<.01&&Math.abs(p.y-40)<.01,'Błędne przeliczenie CSS.');mask._remember();mask.setBrush('erase',28);mask._paint({x:80,y:40},{x:80,y:40});assert(pixel(canvas,80,40)[3]===0,'Pędzel nie usuwa.');mask.undo();assert(pixel(canvas,80,40)[3]===255,'Cofnij nie przywraca maski.');mask.setBrush('restore',20);mask._paint({x:10,y:40},{x:10,y:40});assert(pixel(canvas,10,40).join(',')==='222,45,36,255','Przywracanie nie odzyskało oryginalnego RGB.');const exported=await readBlob(await mask.exportBlob());assert(pixel(exported,10,40)[3]===255,'PNG nie zapisuje korekty.');mask.reset();assert(pixel(canvas,10,40)[3]===0,'Reset nie wraca do wycięcia.');mask.destroy();
+ });
+ await test('Odzyskiwanie maski jest niekumulacyjne, zachowuje RGB i pierwotną przezroczystość',async()=>{
+  const original=fixture(24,24),ctx=original.getContext('2d');ctx.fillStyle='rgba(30,100,180,.5)';ctx.fillRect(0,0,24,24);const cut=fixture(24,24),cc=cut.getContext('2d');cc.fillStyle='rgba(255,0,0,.125)';cc.fillRect(5,5,14,14);
+  const canvas=fixture(24,24);document.getElementById('fixtures').append(canvas);const mask=new S.MaskEditor(canvas,{originalUrl:original.toDataURL(),cutoutUrl:cut.toDataURL()});await mask.ready;const base=pixel(canvas,12,12);mask.applyRefinement({recovery:70,feather:0});const recovered=pixel(canvas,12,12);assert(recovered[3]>base[3]&&recovered[3]<=pixel(original,12,12)[3],'Odzyskiwanie nie zwiększa maski albo niszczy alfa źródła.');assert(mask.display.data[12*24*4+12*4]===mask.original.data[12*24*4+12*4],'Odzyskiwanie zmieniło RGB.');
+  mask.applyRefinement({recovery:30,feather:0});mask.applyRefinement({recovery:70,feather:0});assert(pixel(canvas,12,12).join(',')===recovered.join(','),'Parametry nałożyły się wielokrotnie.');assert(pixel(canvas,0,0)[3]===0,'Odzyskano pewne tło.');
+  mask.applyRefinement({recovery:70,feather:2});assert(pixel(canvas,4,12)[3]>0,'Wygładzanie nie zmieniło krawędzi.');mask.undo();assert(mask.getRefinement().feather===0&&pixel(canvas,4,12)[3]===0,'Cofnij nie przywróciło parametrów i maski.');mask.reset();assert(mask.getRefinement().recovery===0&&pixel(canvas,12,12).join(',')===base.join(','),'Reset nie przywrócił maski modelu.');mask.destroy();
+ });
+ await test('Twardość pędzla zmienia krawędź, a poprawki ręczne zostają bazą regulacji',async()=>{
+  const canvas=fixture(120,80);document.getElementById('fixtures').append(canvas);const mask=new S.MaskEditor(canvas,{originalUrl:product.url,cutoutUrl:product.url});await mask.ready;mask.setBrush('erase',30,0);mask._paint({x:80,y:40},{x:80,y:40});const soft=pixel(canvas,88,40)[3];mask.reset();mask.setBrush('erase',30,1);mask._paint({x:80,y:40},{x:80,y:40});assert(pixel(canvas,88,40)[3]<soft,'Twardość nie wpływa na pędzel.');
+  mask._stroke={pointerId:123};mask._up({pointerId:123});mask.applyRefinement({recovery:50,feather:0});mask.applyRefinement({recovery:0,feather:0});assert(pixel(canvas,80,40)[3]===0,'Regulacja straciła ręczną korektę.');mask.destroy();
+ });
+ await test('Usuń obszar: kliknięcie CSS usuwa zamkniętą biel, zachowuje drugi biały detal i działa Cofnij',async()=>{
+  const source=fixture(120,80),ctx=source.getContext('2d');ctx.fillStyle='#151515';ctx.fillRect(0,0,120,80);ctx.fillStyle='#FFFFFF';ctx.fillRect(15,15,25,20);ctx.fillRect(70,15,25,20);
+  const canvas=fixture(120,80);canvas.className='fixture';document.getElementById('fixtures').append(canvas);let changes=0;const mask=new S.MaskEditor(canvas,{originalUrl:source.toDataURL(),onChange:()=>changes++});await mask.ready;mask.setBrush('area',30);mask.setAreaTolerance(8);
+  const rect=canvas.getBoundingClientRect();canvas.dispatchEvent(new PointerEvent('pointerdown',{clientX:rect.left+rect.width*25/120,clientY:rect.top+rect.height*25/80,button:0,pointerId:71,bubbles:true}));
+  assert(pixel(canvas,25,25)[3]===0&&pixel(canvas,38,33)[3]===0,'Kliknięcie nie usunęło połączonej bieli.');assert(pixel(canvas,75,25)[3]===255&&pixel(canvas,14,25)[3]===255,'Usunięto osobny detal lub ciemny produkt.');assert(changes===1&&mask._undo.length===1&&!mask._stroke,'Kliknięcie nie jest pojedynczą zmianą.');
+  canvas.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.left+rect.width*75/120,clientY:rect.top+rect.height*25/80,pointerId:71,bubbles:true}));assert(pixel(canvas,75,25)[3]===255,'Przeciąganie uruchomiło kolejne usuwanie obszaru.');
+  mask.undo();assert(pixel(canvas,25,25)[3]===255&&changes===2,'Cofnij nie odzyskało całego obszaru.');assert(mask.removeArea(25,25)===500,'Nieprawidłowa liczba usuniętych pikseli.');const png=await readBlob(await mask.exportBlob());assert(pixel(png,25,25)[3]===0&&pixel(png,75,25)[3]===255,'PNG nie zachował wybranego obszaru.');mask.reset();assert(pixel(canvas,25,25).join(',')==='255,255,255,255','Reset nie przywrócił maski początkowej.');mask.destroy();
+ });
+ await test('Usuń obszar: czterech sąsiadów, stały kolor startowy i regulowana tolerancja',async()=>{
+  const source=fixture(32,8),ctx=source.getContext('2d');ctx.fillStyle='#000000';ctx.fillRect(0,0,32,8);ctx.fillStyle='#FFFFFF';ctx.fillRect(1,1,1,1);ctx.fillRect(2,2,1,1);for(let x=0;x<20;x++){const shade=255-x*5;ctx.fillStyle=`rgb(${shade},${shade},${shade})`;ctx.fillRect(x,5,1,1);}
+  const canvas=fixture(32,8),mask=new S.MaskEditor(canvas,{originalUrl:source.toDataURL()});await mask.ready;mask.setAreaTolerance(8);assert(mask.removeArea(1,1)===1&&pixel(canvas,2,2)[3]===255,'Wypełnienie przeszło po przekątnej.');assert(mask.removeArea(0,5)===5,'Tolerancja powinna zatrzymać rampę przy różnicy20/255.');assert(pixel(canvas,4,5)[3]===0&&pixel(canvas,5,5)[3]===255&&pixel(canvas,19,5)[3]===255,'Kolor porównywano z sąsiadem zamiast punktem startowym.');mask.undo();mask.setAreaTolerance(0);assert(mask.removeArea(0,5)===1,'Tolerancja0 nie wymaga dokładnego koloru.');mask.undo();mask.setAreaTolerance(20);assert(mask.removeArea(0,5)===11,'Zwiększenie tolerancji nie rozszerza obszaru.');mask.destroy();
+ });
+ await test('Usuń obszar: przezroczystość źródła i maski nie łączy odrębnych fragmentów',async()=>{
+  const source=fixture(15,5),ctx=source.getContext('2d');ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,15,5);ctx.clearRect(4,0,1,5);const cut=fixture(15,5),cc=cut.getContext('2d');cc.fillStyle='#FFFFFF';cc.fillRect(0,0,15,5);cc.clearRect(9,0,1,5);
+  const canvas=fixture(15,5),mask=new S.MaskEditor(canvas,{originalUrl:source.toDataURL(),cutoutUrl:cut.toDataURL()});await mask.ready;for(let y=0;y<5;y++){const i=(y*15+4)*4;mask.original.data[i]=mask.original.data[i+1]=mask.original.data[i+2]=255;}
+  assert(mask.removeArea(0,0)===20&&pixel(canvas,5,0)[3]===255,'Ukryte RGB źródła połączyło oddzielne części.');assert(mask.removeArea(5,0)===20&&pixel(canvas,10,0)[3]===255,'Pusta maska połączyła oddzielne części.');const history=mask._undo.length;mask.applyRefinement({recovery:40,feather:0});const settings=JSON.stringify(mask.getRefinement()),count=mask._undo.length;assert(mask.removeArea(4,0)===0&&mask.removeArea(9,0)===0&&mask.removeArea(-.1,0)===0&&mask.removeArea(15,0)===0&&mask.removeArea(NaN,0)===0,'Pusty lub zewnętrzny klik zmienił maskę.');assert(mask._undo.length===count&&JSON.stringify(mask.getRefinement())===settings&&history>0,'Pusty klik zmienił historię lub suwaki.');mask.destroy();
+ });
+ await test('Usuń obszar: zachowuje RGB i częściowe alfa oraz staje się bazą regulacji',async()=>{
+  const source=fixture(30,20),ctx=source.getContext('2d');ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,30,20);ctx.fillStyle='rgba(20,80,140,.5)';ctx.clearRect(15,0,15,20);ctx.fillRect(15,0,15,20);const cut=fixture(30,20),cc=cut.getContext('2d');cc.fillStyle='rgba(255,255,255,.25)';cc.fillRect(0,0,30,20);
+  const canvas=fixture(30,20),mask=new S.MaskEditor(canvas,{originalUrl:source.toDataURL(),cutoutUrl:cut.toDataURL()});await mask.ready;mask.applyRefinement({recovery:60,feather:0});const before=pixel(canvas,20,10),white=pixel(canvas,3,10),settings=mask.getRefinement();assert(mask.removeArea(3,10)===300,'Częściowa maska nie jest usuwana.');assert(mask.getRefinement().recovery===0&&mask.getRefinement().feather===0,'Nowy obszar nie wyzerował regulacji.');assert(pixel(canvas,20,10).join(',')===before.join(','),'Usuwanie zmieniło RGB lub alfa innego koloru.');mask.applyRefinement({recovery:80,feather:0});mask.applyRefinement({recovery:0,feather:0});assert(pixel(canvas,3,10)[3]===0&&pixel(canvas,20,10).join(',')===before.join(','),'Regulacja zgubiła usunięty obszar.');mask.undo();mask.undo();mask.undo();assert(pixel(canvas,3,10).join(',')===white.join(',')&&mask.getRefinement().recovery===settings.recovery,'Cofnij nie przywróciło wcześniejszej regulacji.');mask.destroy();
+ });
+ await test('Usuń obszar: limit złożoności pozostawia maskę i historię bez zmian',async()=>{
+  const source=fixture(1200,1200),ctx=source.getContext('2d');ctx.fillStyle='#000000';ctx.fillRect(0,0,1200,1200);ctx.fillStyle='#FFFFFF';for(let y=0;y<1200;y+=2)ctx.fillRect(0,y,1200,1);for(let x=0;x<1200;x+=2)ctx.fillRect(x,0,1,1200);
+  const canvas=fixture(1200,1200);let errors=0,changes=0;const mask=new S.MaskEditor(canvas,{originalUrl:source.toDataURL(),onError:error=>{assert(error.message.includes('Maska nie została zmieniona'),'Brakuje informacji o zachowaniu maski.');errors++;},onChange:()=>changes++});await mask.ready;mask.applyRefinement({recovery:35,feather:0});const previous=mask._snapshot(),history=mask._undo.length,beforeChanges=changes;assert(mask.removeArea(0,0)===0&&errors===1,'Złożony obszar nie został bezpiecznie przerwany.');const after=mask._snapshot();assert(previous.every((v,i)=>v===after[i]),'Błąd złożoności pozostawił częściowe usunięcie.');assert(mask._undo.length===history&&changes===beforeChanges&&mask.getRefinement().recovery===35,'Błąd złożoności zmienił historię, callback lub suwaki.');mask.destroy();source.width=source.height=canvas.width=canvas.height=1;
+ });
+ if(new URLSearchParams(location.search).has('large'))await test('Usuń obszar: 20MP, jednolity obszar, czas i poprawność',async()=>{
+  const source=fixture(5000,4000),ctx=source.getContext('2d');ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,5000,4000);const url=source.toDataURL();source.width=source.height=1;
+  const canvas=fixture(1,1),mask=new S.MaskEditor(canvas,{originalUrl:url});await mask.ready;const start=performance.now(),count=mask.removeArea(2500,2000),elapsed=performance.now()-start;assert(count===20000000,'Nie usunięto całego obrazu20MP.');assert(pixel(canvas,0,0)[3]===0&&pixel(canvas,4999,3999)[3]===0,'Usuwanie20MP jest częściowe.');mask.undo();assert(pixel(canvas,4999,3999)[3]===255,'Cofnij20MP jest częściowe.');lines.push('INFO  Obszar20MP: '+Math.round(elapsed)+' ms; maski robocze40MB, stos maks.512KiB.');mask.destroy();canvas.width=canvas.height=1;
+ });
+ await test('Klawiatura edytora przesuwa o piksel; zaznaczenie nie trafia do eksportu',async()=>{
+  const scene=make(),canvas=fixture(600,450);document.getElementById('fixtures').append(canvas);let changes=0;const editor=new S.Editor(canvas,{scene,onChange:()=>changes++});editor.select('product');const x=editor.getScene().layers.find(x=>x.id==='product').x;canvas.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));assert(Math.abs(editor.getScene().layers.find(x=>x.id==='product').x-x-1/600)<.000001,'Strzałka ma zły krok.');assert(changes===1,'Brak callback po edycji.');const changed=editor.getScene();await S.render(canvas,changed,{selection:'product'});const withSelection=await S.renderBlob(changed,{type:'image/png'});await S.render(canvas,changed);const withoutSelection=await S.renderBlob(changed,{type:'image/png'});const a=new Uint8Array(await withSelection.blob.arrayBuffer()),b=new Uint8Array(await withoutSelection.blob.arrayBuffer());assert(a.length===b.length&&a.every((v,i)=>v===b[i]),'Uchwyty trafiły do pliku.');editor.destroy();
+ });
+ for(const t of S.templates){for(const [w,h] of [[600,450],[728,90],[320,50],[160,600]]){const card=document.createElement('div');card.className='sample';const label=document.createElement('p');label.textContent=t.label+' · '+w+' × '+h;const canvas=fixture(w,h);const scene=make(t.id,w,h);await S.render(canvas,scene);const notes=document.createElement('p');notes.textContent=S.validate(scene).map(x=>x.message).join(' ');card.append(label,canvas,notes);document.getElementById('samples').append(card);}}
+ report.textContent=(failed?'NIEPOWODZENIA: '+failed:'WSZYSTKIE TESTY ZAKOŃCZONE POWODZENIEM')+'\n\n'+lines.join('\n');report.className=failed?'fail':'pass';document.body.dataset.testStatus=failed?'failed':'passed';document.getElementById('run').disabled=false;
+}
+document.getElementById('run').addEventListener('click',run);run().catch(e=>{report.textContent='BŁĄD HARNESSU: '+e.stack;document.body.dataset.testStatus='failed';document.getElementById('run').disabled=false;});
+</script>
+</html>
